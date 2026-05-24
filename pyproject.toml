@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "numfields"
+version = "0.1.0"
+description = "Numerical electromagnetic field simulator — electrostatics scene builder"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "moderngl>=5.8.0",
+    "glfw>=2.6.0",
+    "imgui-bundle>=1.5.0",
+    "PyOpenGL>=3.1.6",
+    "numpy>=1.24.0",
+    "pyglm>=2.7.0",
+]
+
+[project.scripts]
+numfields = "numfields.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+numfields = ["rendering/shaders/*.glsl"]
