@@ -51,7 +51,14 @@ class SceneRenderer:
     def mesh_cache(self) -> MeshCache:
         return self._mesh_cache
 
-    def render(self, scene: Scene, camera: OrbitCamera, selected_id: str | None) -> None:
+    def render(
+        self,
+        scene: Scene,
+        camera: OrbitCamera,
+        selected_id: str | None,
+        *,
+        translating: bool = False,
+    ) -> None:
         self._mesh_cache.sync(scene)
         view = camera.view_matrix()
         proj = camera.projection_matrix()
@@ -64,7 +71,13 @@ class SceneRenderer:
         self._ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
 
         for dim in (Dimension.VOLUME, Dimension.SURFACE, Dimension.LINE):
-            self._draw_pass(scene, dim, selected_id, double_sided=(dim == Dimension.SURFACE))
+            self._draw_pass(
+                scene,
+                dim,
+                selected_id,
+                double_sided=(dim == Dimension.SURFACE),
+                translating=translating,
+            )
 
         self._draw_helpers(camera, selected_id)
 
@@ -75,6 +88,7 @@ class SceneRenderer:
         selected_id: str | None,
         *,
         double_sided: bool,
+        translating: bool,
     ) -> None:
         if double_sided:
             self._ctx.disable(moderngl.CULL_FACE)
@@ -91,11 +105,15 @@ class SceneRenderer:
             if gpu is None:
                 continue
             selected = 1 if selected_id is not None and body.id == selected_id else 0
+            dragging = 1 if selected and translating else 0
+            body_alpha = min(1.0, alpha + 0.15) if dragging else alpha
             model = body.transform.matrix()
             self._solid["u_model"].write(bytes(glm.transpose(model)))
             self._solid["u_tint"].write(bytes(tint))
-            self._solid["u_alpha"].value = alpha
+            self._solid["u_alpha"].value = body_alpha
             self._solid["u_selected"].value = selected
+            if "u_translating" in self._solid:
+                self._solid["u_translating"].value = dragging
             if "u_body_id" in self._solid:
                 self._solid["u_body_id"].value = i + 1
             gpu.vao.render(mode=gpu.mode)
@@ -149,6 +167,8 @@ class SceneRenderer:
             self._solid["u_tint"].write(bytes(AXIS_COLORS[0]))
             self._solid["u_alpha"].value = 1.0
             self._solid["u_selected"].value = 0
+            if "u_translating" in self._solid:
+                self._solid["u_translating"].value = 0
             if "u_body_id" in self._solid:
                 self._solid["u_body_id"].value = 0
             axis_mesh.vao.render(mode=axis_mesh.mode)

@@ -69,6 +69,7 @@ class Application:
         self._lmb_down = False
         self._mmb_down = False
         self._first_dock = True
+        self._keys_prev: dict[int, bool] = {}
 
     def _setup_docking(self) -> None:
         viewport = imgui.get_main_viewport()
@@ -113,9 +114,15 @@ class Application:
         io = imgui.get_io()
         
         from imgui_bundle.imguizmo import im_guizmo
-        gizmo_active = im_guizmo.is_using() or im_guizmo.is_over()
-        
-        if not vp.allow_camera() or gizmo_active:
+        alt_orbit = io.key_alt
+        gizmo_using = im_guizmo.is_using() and not alt_orbit
+
+        if not vp.allow_camera() or gizmo_using:
+            self._lmb_down = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+            self._mmb_down = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
+            return
+
+        if io.want_capture_mouse and not alt_orbit:
             self._lmb_down = False
             self._mmb_down = False
             return
@@ -159,7 +166,12 @@ class Application:
         self.fbo.clear()
         sel = self.scene.selected_id()
         sel_str = str(sel) if sel else None
-        self.renderer.render(self.scene, self.camera, sel_str)
+        self.renderer.render(
+            self.scene,
+            self.camera,
+            sel_str,
+            translating=self.viewport_panel.gizmo_translating,
+        )
         self.ctx.screen.use()
 
     def _draw_ui(self) -> None:
@@ -168,6 +180,65 @@ class Application:
         self.hierarchy_panel.draw(self.scene)
         self.add_panel.draw(self.scene)
         self.inspector_panel.draw(self.scene)
+        self._handle_delete_selected()
+
+    def _shift_down(self) -> bool:
+        return (
+            glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
+            or glfw.get_key(self.window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS
+        )
+
+    def _ctrl_down(self) -> bool:
+        return (
+            glfw.get_key(self.window, glfw.KEY_LEFT_CONTROL) == glfw.PRESS
+            or glfw.get_key(self.window, glfw.KEY_RIGHT_CONTROL) == glfw.PRESS
+        )
+
+    def _key_just_pressed(self, key: int) -> bool:
+        down = glfw.get_key(self.window, key) == glfw.PRESS
+        prev = self._keys_prev.get(key, False)
+        self._keys_prev[key] = down
+        return down and not prev
+
+    def _just_pressed_key_labels(self, *keys: int) -> list[str]:
+        labels: list[str] = []
+        for key in keys:
+            if not self._key_just_pressed(key):
+                continue
+            labels.append((glfw.get_key_name(key, 0) or "").lower())
+        return labels
+
+    def _handle_undo_redo(self) -> None:
+        io = imgui.get_io()
+        if io.want_text_input and imgui.is_any_item_active():
+            return
+
+        if not self._ctrl_down():
+            self._key_just_pressed(glfw.KEY_Z)
+            self._key_just_pressed(glfw.KEY_Y)
+            return
+
+        shift = self._shift_down()
+        for label in self._just_pressed_key_labels(glfw.KEY_Z, glfw.KEY_Y):
+            if label == "z" and not shift:
+                self.scene.undo()
+                return
+            if label == "y" and not shift:
+                self.scene.redo()
+                return
+            if label == "z" and shift:
+                self.scene.redo()
+                return
+
+    def _handle_delete_selected(self) -> None:
+        selected_id = self.scene.selected_id()
+        if selected_id is None:
+            return
+        io = imgui.get_io()
+        if io.want_text_input:
+            return
+        if imgui.is_key_pressed(imgui.Key.delete):
+            self.scene.remove(selected_id)
 
     def run(self) -> None:
         while not glfw.window_should_close(self.window):
@@ -176,6 +247,10 @@ class Application:
             self.ctx.screen.clear(0.15, 0.15, 0.15, 1.0)
             imgui.new_frame()
 
+            from imgui_bundle.imguizmo import im_guizmo
+            im_guizmo.begin_frame()
+
+            self._handle_undo_redo()
             self._draw_ui()
             self._handle_camera_input()
             self._render_viewport()

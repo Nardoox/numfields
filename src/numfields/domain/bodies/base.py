@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from numfields.domain.charge import ChargeDistribution
+from numfields.domain.charge import ChargeInputMode, HomogeneousCharge
 from numfields.domain.types import BodyId, Dimension, Transform, new_body_id
 
 
@@ -23,11 +23,12 @@ class GeometricBody(ABC):
         *,
         body_id: BodyId | None = None,
         transform: Transform | None = None,
+        charge: HomogeneousCharge | None = None,
     ) -> None:
         self.id = body_id or new_body_id()
         self.name = name
         self.transform = transform or Transform()
-        self._charge: ChargeDistribution | None = None
+        self._charge = charge or HomogeneousCharge()
 
     @property
     @abstractmethod
@@ -46,8 +47,25 @@ class GeometricBody(ABC):
     @abstractmethod
     def mesh_spec(self) -> MeshSpec: ...
 
-    def charge(self) -> ChargeDistribution | None:
+    def charge(self) -> HomogeneousCharge:
         return self._charge
+
+    def measure(self) -> float:
+        from numfields.geometry.measure import body_measure
+
+        return body_measure(self)
+
+    def set_charge_density(self, value: float) -> None:
+        self._charge.set_density(self, value)
+
+    def set_total_charge(self, value: float) -> None:
+        self._charge.set_total_charge(self, value)
+
+    def set_charge_mode(self, mode: ChargeInputMode) -> None:
+        self._charge.set_mode(self, mode)
+
+    def sync_charge_after_geometry_change(self) -> None:
+        self._charge.sync_after_geometry_change(self)
 
     def parameter_keys(self) -> list[str]:
         return list(self.parameters().keys())

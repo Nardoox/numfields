@@ -32,5 +32,21 @@ class AddMenuPanel:
                     if imgui.button(display_name, imgui.ImVec2(-1, 0)):
                         body = create_body(type_id)
                         scene.add(body, select=True)
+                if dim == Dimension.LINE:
+                    imgui.separator()
+                    imgui.text_disabled("Presets")
+                    if imgui.button("Flat Circle", imgui.ImVec2(-1, 0)):
+                        from numfields.domain.bodies.line.parametric_curve import ParametricCurveBody
+
+                        body = ParametricCurveBody(
+                            "Circle Curve",
+                            expr_x="R * cos(t)",
+                            expr_y="R * sin(t)",
+                            expr_z="0",
+                            t_min=0.0,
+                            t_max=6.283185307179586,
+                            segments=64.0,
+                        )
+                        scene.add(body, select=True)
 
         imgui.end()

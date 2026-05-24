@@ -26,6 +26,7 @@ in vec3 v_world_pos;
 uniform vec3 u_tint;
 uniform float u_alpha;
 uniform int u_selected;
+uniform int u_translating;
 uniform vec3 u_light_dir;
 uniform int u_body_id;
 
@@ -41,6 +42,9 @@ void main() {
     vec3 base = u_tint * (0.25 + 0.65 * diff) + vec3(0.15) * spec;
     if (u_selected != 0) {
         base += u_tint * 0.35;
+    }
+    if (u_translating != 0) {
+        base += vec3(0.18);
     }
     f_color = vec4(base, u_alpha);
     f_picking = u_body_id;

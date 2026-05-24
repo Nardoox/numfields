@@ -40,12 +40,4 @@ class HierarchyPanel:
                     scene.remove(scene.selected_id())  # type: ignore[arg-type]
             imgui.end_popup()
 
-        io = imgui.get_io()
-        if (
-            imgui.is_window_focused()
-            and scene.selected_id() is not None
-            and imgui.is_key_pressed(imgui.Key.delete)
-        ):
-            scene.remove(scene.selected_id())  # type: ignore[arg-type]
-
         imgui.end()

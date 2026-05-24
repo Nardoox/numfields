@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from numfields.domain.bodies.base import MeshSpec
+from numfields.geometry.expression_eval import evaluate_expression
 from numfields.geometry.mesh_data import MeshData
 
 
@@ -19,6 +20,10 @@ def build_mesh(spec: MeshSpec) -> MeshData:
         "disk": disk,
         "rectangle": rectangle,
         "segment": segment,
+        "circle_loop": circle_loop,
+        "rect_outline": rect_outline,
+        "parametric_curve": parametric_curve,
+        "coil": coil,
     }
     fn = builders.get(spec.builder)
     if fn is None:
@@ -203,6 +208,193 @@ def segment(
     new_nrm[:, 1] = -nrm[:, 0]
     new_nrm[:, 2] = nrm[:, 2]
     return MeshData(positions=new_pos, normals=new_nrm, indices=data.indices)
+
+
+def _merge_meshes(parts: list[MeshData]) -> MeshData:
+    positions: list[np.ndarray] = []
+    normals: list[np.ndarray] = []
+    indices: list[np.ndarray] = []
+    offset = 0
+    for part in parts:
+        positions.append(part.positions)
+        normals.append(part.normals)
+        indices.append(part.indices + offset)
+        offset += len(part.positions)
+    return MeshData(
+        positions=np.vstack(positions),
+        normals=np.vstack(normals),
+        indices=np.concatenate(indices),
+    )
+
+
+def _rotation_y_to_direction(direction: np.ndarray) -> np.ndarray:
+    y = np.array([0.0, 1.0, 0.0], dtype="f8")
+    d = direction / np.linalg.norm(direction)
+    if np.allclose(d, y):
+        return np.eye(3)
+    if np.allclose(d, -y):
+        return np.diag([1.0, -1.0, -1.0])
+    v = np.cross(y, d)
+    s = np.linalg.norm(v)
+    c = float(np.dot(y, d))
+    vx = np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
+    return np.eye(3) + vx + vx @ vx * ((1.0 - c) / (s * s))
+
+
+def _tube_segment(
+    p0: tuple[float, float, float],
+    p1: tuple[float, float, float],
+    radius: float,
+    segments: int = 12,
+) -> MeshData:
+    delta = np.array(p1, dtype="f8") - np.array(p0, dtype="f8")
+    length = float(np.linalg.norm(delta))
+    if length < 1e-8:
+        return MeshData(
+            positions=np.zeros((0, 3), dtype="f4"),
+            normals=np.zeros((0, 3), dtype="f4"),
+            indices=np.zeros(0, dtype="u4"),
+        )
+
+    data = cylinder(radius=radius, height=length, segments=segments)
+    rot = _rotation_y_to_direction(delta)
+    pos = data.positions @ rot.T
+    nrm = data.normals @ rot.T
+    mid = (np.array(p0, dtype="f8") + np.array(p1, dtype="f8")) * 0.5
+    pos += mid
+    return MeshData(positions=pos.astype("f4"), normals=nrm.astype("f4"), indices=data.indices)
+
+
+def circle_loop(
+    radius: float = 1.0,
+    slices: int = 64,
+    tube_radius: float = 0.005,
+    **_: Any,
+) -> MeshData:
+    positions: list[list[float]] = []
+    normals: list[list[float]] = []
+    indices: list[int] = []
+    major = max(radius, 0.01)
+    minor = max(tube_radius, 0.001)
+    tube_slices = max(8, slices // 4)
+
+    for i in range(slices + 1):
+        u = 2.0 * math.pi * i / slices
+        for j in range(tube_slices + 1):
+            v = 2.0 * math.pi * j / tube_slices
+            x = (major + minor * math.cos(v)) * math.cos(u)
+            y = (major + minor * math.cos(v)) * math.sin(u)
+            z = minor * math.sin(v)
+            nx = math.cos(v) * math.cos(u)
+            ny = math.cos(v) * math.sin(u)
+            nz = math.sin(v)
+            positions.append([x, y, z])
+            normals.append([nx, ny, nz])
+
+    row = tube_slices + 1
+    for i in range(slices):
+        for j in range(tube_slices):
+            a = i * row + j
+            b = a + row
+            indices.extend([a, b, a + 1, a + 1, b, b + 1])
+
+    return MeshData(
+        positions=np.array(positions, dtype="f4"),
+        normals=np.array(normals, dtype="f4"),
+        indices=np.array(indices, dtype="u4"),
+    )
+
+
+def rect_outline(
+    width: float = 2.0,
+    height: float = 1.0,
+    tube_radius: float = 0.005,
+    **_: Any,
+) -> MeshData:
+    hw, hh = width * 0.5, height * 0.5
+    corners = [
+        (-hw, -hh, 0.0),
+        (hw, -hh, 0.0),
+        (hw, hh, 0.0),
+        (-hw, hh, 0.0),
+    ]
+    parts = [
+        _tube_segment(corners[i], corners[(i + 1) % 4], tube_radius)
+        for i in range(4)
+    ]
+    return _merge_meshes(parts)
+
+
+def coil(
+    length: float = 2.0,
+    radius: float = 0.5,
+    windings: float = 3.0,
+    segments: int = 96,
+    **_: Any,
+) -> MeshData:
+    turns = max(1.0, windings)
+    t_max = 2.0 * math.pi * turns
+    count = max(48, segments)
+    ts = np.linspace(0.0, t_max, count + 1)
+    points = [
+        (radius * math.cos(t), radius * math.sin(t), length * t / t_max)
+        for t in ts
+    ]
+    span = max(
+        (math.dist(points[i], points[i + 1]) for i in range(len(points) - 1)),
+        default=0.01,
+    )
+    tube_radius = max(0.005, span * 0.15)
+    parts = [
+        _tube_segment(points[i], points[i + 1], tube_radius)
+        for i in range(len(points) - 1)
+    ]
+    return _merge_meshes(parts)
+
+
+def parametric_curve(
+    expr_x: str,
+    expr_y: str,
+    expr_z: str,
+    t_min: float,
+    t_max: float,
+    segments: int,
+    variables: dict[str, float] | None = None,
+    **_: Any,
+) -> MeshData:
+    vars_map = dict(variables or {})
+    count = max(3, segments)
+    ts = np.linspace(t_min, t_max, count + 1)
+    points: list[tuple[float, float, float]] = []
+    try:
+        for t in ts:
+            ctx = {"t": float(t), **vars_map}
+            points.append(
+                (
+                    evaluate_expression(expr_x, ctx),
+                    evaluate_expression(expr_y, ctx),
+                    evaluate_expression(expr_z, ctx),
+                )
+            )
+    except Exception:
+        return segment(length=1.0, radius=0.01, segments=8)
+
+    if len(points) < 2:
+        return segment(length=1.0, radius=0.01, segments=8)
+
+    span = max(
+        (
+            math.dist(points[i], points[i + 1])
+            for i in range(len(points) - 1)
+        ),
+        default=0.01,
+    )
+    tube_radius = max(0.005, span * 0.15)
+    parts = [
+        _tube_segment(points[i], points[i + 1], tube_radius)
+        for i in range(len(points) - 1)
+    ]
+    return _merge_meshes(parts)
 
 
 def grid_lines(size: float = 10.0, divisions: int = 20) -> MeshData:
